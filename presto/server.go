@@ -10,7 +10,7 @@ import (
 type handler struct {
 	path     string
 	method   string
-	handle   func(Request, Response)
+	handle   func(Request, Response) bool
 }
 
 func handlerMatches(current handler, method string, path string) bool {
@@ -29,14 +29,18 @@ func handlerMatches(current handler, method string, path string) bool {
 	return false
 }
 
-func jsonBodyParser(r *http.Request) (json, error) {
+func jsonBodyParser(r *http.Request) (JsonObject, error) {
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return nil, err
 	}
 	defer r.Body.Close()
 
-	result := make(json)
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	result := make(JsonObject)
 
 	err = js.Unmarshal(data, &result)
 
@@ -49,53 +53,70 @@ type Server struct {
 	middleware []handler
 }
 
-func handleRequest(w http.ResponseWriter, r *http.Request, s *Server) {
-	middleware := s.middleware
-	path := r.RequestURI
-	method := r.Method
+func initVars(w http.ResponseWriter, r *http.Request) (Request, Response){
 	// gotta build the Request and Response to pass lol
 	req := Request{}
 	res := Response{}
 	body, err := jsonBodyParser(r)
 	if err != nil {
+		println("okay here")
+		fmt.Println(err)
 		panic(err)
 	}
-	req.Body = body
+	if body != nil {
+		req.Body = body
+	} else {
+		req.Body = make(JsonObject)
+	}
+	res.r = w;
+
+	return req, res
+}
+
+func handleRequest(w http.ResponseWriter, r *http.Request, s *Server) {
+	middleware := s.middleware
+	path := r.RequestURI
+	method := r.Method
+	var requestDone bool
+	req, res := initVars(w, r)
 	// this is incredibly slow and I have to say I am embarrassed
 	// but hey this is just to see if it all works
 	for i := 0; i < len(middleware); i++ {
 		current := middleware[i]
 		if handlerMatches(current, method, path) {
-			current.handle(req, res)
-			break;
+			requestDone = current.handle(req, res)
+			fmt.Println(requestDone)
+			if (requestDone) {
+				break
+			}
 		}
 	}
 }
 
-func addHandler(s *Server, path string, handlerFunction func(Request, Response), method string) {
+func addHandler(s *Server, path string, handlerFunction func(Request, Response) bool, method string) {
 	temp := handler{}
 	temp.handle = handlerFunction
 	temp.method = method
 	temp.path = path
+	if method == "" {
+		temp.method = "*"
+	}
+	if path == "" {
+		temp.path = "*"
+	}
 	s.middleware = append(s.middleware, temp)
 }
 
-func (s *Server) Get(path string, handlerFunction func(Request, Response)) {
+func (s *Server) Get(path string, handlerFunction func(Request, Response) bool) {
 	addHandler(s, path, handlerFunction, "GET")
 }
 
-func (s *Server) Post(path string, handlerFunction func(Request, Response)) {
+func (s *Server) Post(path string, handlerFunction func(Request, Response) bool) {
 	addHandler(s, path, handlerFunction, "POST")
 }
 
-func (s *Server) Use(handlerFunction func(Request, Response), path string) {
-	temp := handler{}
-	temp.method = "*"
-	temp.path = "*"
-	if path != "" {
-		temp.path = path
-	}
-	s.middleware = append(s.middleware, temp)
+func (s *Server) Use(handlerFunction func(Request, Response) bool, path string) {
+	addHandler(s, path, handlerFunction, "*")
 }
 
 func (s *Server) Start(port string) {
