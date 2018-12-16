@@ -5,6 +5,7 @@ import (
 	"fmt"
 	js "encoding/json"
 	"io/ioutil"
+	str "strings"
 )
 
 type handler struct {
@@ -53,13 +54,21 @@ type Server struct {
 	middleware []handler
 }
 
+func queryToMap(query string) JsonObject {
+	out := JsonObject{}
+	strings := str.Split(query, "=")
+	for i := 0; i < len(strings); i += 2 {
+		out[strings[i]] = strings[i + 1]
+	}
+	return out
+}
+
 func initVars(w http.ResponseWriter, r *http.Request) (Request, Response){
 	// gotta build the Request and Response to pass lol
 	req := Request{}
 	res := Response{}
 	body, err := jsonBodyParser(r)
 	if err != nil {
-		println("okay here")
 		fmt.Println(err)
 		panic(err)
 	}
@@ -68,14 +77,15 @@ func initVars(w http.ResponseWriter, r *http.Request) (Request, Response){
 	} else {
 		req.Body = make(JsonObject)
 	}
+	queryParams := queryToMap(r.URL.RawQuery)
+	req.Query = queryParams
 	res.r = w;
-
 	return req, res
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request, s *Server) {
 	middleware := s.middleware
-	path := r.RequestURI
+	path := r.URL.Path
 	method := r.Method
 	var requestDone bool
 	req, res := initVars(w, r)
@@ -85,7 +95,6 @@ func handleRequest(w http.ResponseWriter, r *http.Request, s *Server) {
 		current := middleware[i]
 		if handlerMatches(current, method, path) {
 			requestDone = current.handle(req, res)
-			fmt.Println(requestDone)
 			if (requestDone) {
 				break
 			}
@@ -115,6 +124,18 @@ func (s *Server) Post(path string, handlerFunction func(Request, Response) bool)
 	addHandler(s, path, handlerFunction, "POST")
 }
 
+func (s *Server) PUT(path string, handlerFunction func(Request, Response) bool) {
+	addHandler(s, path, handlerFunction, "PUT")
+}
+
+func (s *Server) DELETE(path string, handlerFunction func(Request, Response) bool) {
+	addHandler(s, path, handlerFunction, "DELETE")
+}
+
+func (s *Server) OPTIONS(path string, handlerFunction func(Request, Response) bool) {
+	addHandler(s, path, handlerFunction, "OPTIONS")
+}
+
 func (s *Server) Use(handlerFunction func(Request, Response) bool, path string) {
 	addHandler(s, path, handlerFunction, "*")
 }
@@ -125,7 +146,6 @@ func (s *Server) Start(port string) {
 	}
 	s.port = port
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		println("something")
 		handleRequest(w, r, s)
 	})
 	error := http.ListenAndServe(":" + port, nil)
